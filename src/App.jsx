@@ -1,7 +1,6 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef } from 'react'
 
-// ── DATOS EQUIPOS ─────────────────────────────────────────────────────────
-// [rank, att, def, forma_score, valor€M, host, wc_titles]
+// ── DATOS EQUIPOS [rank, att, def, forma, valor€M, host, wc_titles] ───────
 const T = {
   'España':         [2,  2.30,0.70,0.94,1050,0,1],
   'Francia':        [3,  2.25,0.72,0.90,1100,0,2],
@@ -74,49 +73,49 @@ const GRP_COLORS = {
   I:'#9333ea',J:'#0284c7',K:'#ea580c',L:'#06b6d4',
 }
 
-// Bracket oficial FIFA 2026
+// Bracket oficial FIFA 2026 — dieciséisavos
 const R32_DEF = [
-  ['1E','3ABCDF'],['1I','3CDFGH'],['2A','2B'],['1F','2C'],
+  ['1E','3ABCDF'],['1I','3CDFGH'],['2A','2B'],   ['1F','2C'],
   ['2K','2L'],   ['1H','2J'],   ['1D','3BEFIJ'],['1G','3AEHIJ'],
   ['1C','2F'],   ['2E','2I'],   ['1A','3CEFHI'],['1L','3EHIJK'],
   ['1J','2H'],   ['2D','2G'],   ['1B','3EFGIJ'],['1K','3DEJL'],
 ]
 
-// ── ENGINE ────────────────────────────────────────────────────────────────
+// ── MOTOR ─────────────────────────────────────────────────────────────────
 function strength(nm) {
   const d = T[nm]; if (!d) return 0.40
   const [rank,,, fs, val, host, wc] = d
   const rf  = Math.max(0, 1-(rank-1)*0.008)
   const vf  = Math.log(val+1)/Math.log(1100)
   const wcf = Math.min(wc*0.025, 0.10)
-  const h   = host ? 0.04 : 0
-  return Math.min(0.82, Math.max(0.32, 0.20*rf+0.35*fs+0.15*vf+0.10*wcf+0.20*rf+h))
+  return Math.min(0.82, Math.max(0.32, 0.20*rf+0.35*fs+0.15*vf+0.10*wcf+0.20*rf+(host?0.04:0)))
 }
 
 function poisson(lam) {
   const L = Math.exp(-Math.max(0.25, lam))
   let k=0, p=1
-  do { k++; p *= Math.random() } while (p>L && k<20)
+  do { k++; p*=Math.random() } while (p>L && k<20)
   return k-1
 }
 
-function simMatch(h, a, ko) {
+function simGoals(h, a, ko) {
   const sH=strength(h), sA=strength(a), tot=sH+sA+0.001
-  const dH=T[h]||[], dA=T[a]||[]
-  const lH = Math.max(0.3, (sH/tot)*(dH[1]||1.5)*(dA[2]||1.0)*(ko?0.85:1)*1.65+0.08)
-  const lA = Math.max(0.2, (sA/tot)*(dA[1]||1.5)*(dH[2]||1.0)*(ko?0.85:1)*1.65)
+  const dH=T[h]||[], dA=T[a]||[], kf=ko?0.85:1
+  const lH = Math.max(0.3, (sH/tot)*(dH[1]||1.5)*(dA[2]||1.0)*kf*1.65+0.08)
+  const lA = Math.max(0.2, (sA/tot)*(dA[1]||1.5)*(dH[2]||1.0)*kf*1.65)
   return [poisson(lH), poisson(lA)]
 }
 
-function simPens(h, a) {
-  const p = 0.5+(strength(h)-strength(a))*0.15
-  return Math.random() < Math.min(0.78,Math.max(0.22,p)) ? h : a
-}
-
-function playMatch(h, a, ko) {
-  const [gh, ga] = simMatch(h, a, ko)
-  const w = gh>ga ? h : ga>gh ? a : simPens(h, a)
-  return { h, a, gh, ga, w }
+function playKO(h, a) {
+  const [gh, ga] = simGoals(h, a, true)
+  let w
+  if (gh > ga) w = h
+  else if (ga > gh) w = a
+  else {
+    const p = 0.5+(strength(h)-strength(a))*0.15
+    w = Math.random() < Math.min(0.78,Math.max(0.22,p)) ? h : a
+  }
+  return { h, a, gh, ga, w, l: w===h?a:h }
 }
 
 function simGroup(teams) {
@@ -124,7 +123,7 @@ function simGroup(teams) {
   teams.forEach(t => { pts[t]=0; gf[t]=0; ga[t]=0 })
   for (let i=0; i<teams.length; i++)
     for (let j=i+1; j<teams.length; j++) {
-      const [gh, ga2] = simMatch(teams[i], teams[j], false)
+      const [gh, ga2] = simGoals(teams[i], teams[j], false)
       gf[teams[i]]+=gh; ga[teams[i]]+=ga2
       gf[teams[j]]+=ga2; ga[teams[j]]+=gh
       if (gh>ga2) pts[teams[i]]+=3
@@ -142,211 +141,229 @@ function resolveRef(ref, w1, r1, thirds) {
   const type=ref[0], grp=ref.slice(1)
   if (type==='1') return w1[grp]
   if (type==='2') return r1[grp]
-  const best = thirds.filter(x => grp.includes(x.g))
-    .sort((a,b) => b.pts!==a.pts ? b.pts-a.pts : b.gd!==a.gd ? b.gd-a.gd : b.gf-a.gf)
-  return best.length ? best[0].t : (thirds[0]?.t || '?')
+  const best = thirds
+    .filter(x => grp.includes(x.g))
+    .sort((a,b) => b.pts!==a.pts?b.pts-a.pts:b.gd!==a.gd?b.gd-a.gd:b.gf-a.gf)
+  return best.length ? best[0].t : (thirds[0]?.t||'?')
 }
 
-// ── ACUMULADORES ──────────────────────────────────────────────────────────
-function mkAcc() { return { pairs: {} } }
-function accPair(acc, h, a, gh, ga, w) {
-  const key = h+'|'+a
-  if (!acc.pairs[key]) acc.pairs[key] = { n:0, wins:{}, hwS:{}, dS:{}, awS:{} }
-  const p = acc.pairs[key]; p.n++
-  p.wins[w] = (p.wins[w]||0)+1
-  const sc = gh+'-'+ga
-  if (gh>ga) p.hwS[sc]=(p.hwS[sc]||0)+1
-  else if (gh===ga) p.dS[sc]=(p.dS[sc]||0)+1
-  else p.awS[sc]=(p.awS[sc]||0)+1
-}
+// ── SIMULACIÓN COMPLETA ───────────────────────────────────────────────────
+// Clave: guardamos CADA torneo completo como objeto serializable.
+// Al final elegimos el torneo más representativo cuyo campeón sea el más frecuente.
+// El bracket que se muestra ES ese torneo — 100% coherente garantizado.
 
-function mkMatchAcc() { return { n:0, hw:0, d:0, aw:0, hwS:{}, dS:{}, awS:{} } }
-function accGrp(acc, gh, ga) {
-  acc.n++
-  const sc = gh+'-'+ga
-  if (gh>ga) { acc.hw++; acc.hwS[sc]=(acc.hwS[sc]||0)+1 }
-  else if (gh===ga) { acc.d++; acc.dS[sc]=(acc.dS[sc]||0)+1 }
-  else { acc.aw++; acc.awS[sc]=(acc.awS[sc]||0)+1 }
-}
-
-function topEntry(obj) {
-  const e = Object.entries(obj)
-  return e.length ? e.sort((a,b)=>b[1]-a[1])[0] : null
-}
-
-function slotSummary(acc, N) {
-  const topP = topEntry(acc.pairs)
-  if (!topP) return { w:'TBD', l:'TBD', wGoals:'?', lGoals:'?', wPct:0, lPct:0 }
-  const [key, pd] = topP
-  const [h, a] = key.split('|')
-  const topW = topEntry(pd.wins)
-  const w = topW ? topW[0] : h
-  const l = w===h ? a : h
-  const wPct = +((pd.wins[w]||0)/N*100).toFixed(1)
-  const lPct = +((pd.wins[l]||0)/N*100).toFixed(1)
-  const pool = w===h ? pd.hwS : w===a ? pd.awS : pd.dS
-  const topSc = topEntry(pool||{})
-  let wGoals='1', lGoals='0'
-  if (topSc) {
-    const pts = topSc[0].split('-')
-    wGoals = w===h ? pts[0] : pts[1]
-    lGoals = w===h ? pts[1] : pts[0]
-  }
-  return { w, l, wGoals, lGoals, wPct, lPct }
-}
-
-function bestGrpScore(acc) {
-  const n = acc.n||1
-  const pw=acc.hw/n, pd=acc.d/n, pl=acc.aw/n
-  const pool = pw>=pd&&pw>=pl ? acc.hwS : pd>=pw&&pd>=pl ? acc.dS : acc.awS
-  const e = topEntry(pool||{})
-  return { score: e?e[0]:'1-0', pct: e?Math.round(e[1]/n*100):0 }
-}
-
-// ── SIMULACIÓN ────────────────────────────────────────────────────────────
-function runSimulation(N, onProgress, onDone) {
-  const champC={}, grpQ={}
-  const grpMatchAcc={}
+function runOneTournament() {
   const gks = Object.keys(GRP)
+  const w1={}, r1={}, thirds=[]
 
-  const r32acc = Array.from({length:16}, mkAcc)
-  const r16acc = Array.from({length:8},  mkAcc)
-  const qfAcc  = Array.from({length:4},  mkAcc)
-  const sfAcc  = Array.from({length:2},  mkAcc)
-  const finAcc = mkAcc()
-
+  // Fase de grupos
+  const grpResults = {}
   gks.forEach(g => {
-    GRP[g].forEach(t => { if (!champC[t]) champC[t]=0; if (!grpQ[t]) grpQ[t]=0 })
+    const sorted = simGroup(GRP[g])
+    w1[g]=sorted[0]; r1[g]=sorted[1]
+    grpResults[g] = sorted
+    const t3=sorted[2]
+    // pts reales del tercero vs los otros 3
+    let p3=0, gf3=0, ga3=0
+    for (let i=0; i<GRP[g].length; i++)
+      for (let j=i+1; j<GRP[g].length; j++) {
+        const [gh,ga2] = simGoals(GRP[g][i], GRP[g][j], false)
+        if (GRP[g][i]===t3) { gf3+=gh; ga3+=ga2; if(gh>ga2)p3+=3; else if(gh===ga2)p3++ }
+        if (GRP[g][j]===t3) { gf3+=ga2; ga3+=gh; if(ga2>gh)p3+=3; else if(gh===ga2)p3++ }
+      }
+    thirds.push({ t:t3, g, pts:p3, gd:gf3-ga3, gf:gf3 })
+  })
+  thirds.sort((a,b) => b.pts!==a.pts?b.pts-a.pts:b.gd!==a.gd?b.gd-a.gd:b.gf-a.gf)
+
+  // Construir bracket
+  const r32pairs = R32_DEF.map(([rH,rA]) => [
+    resolveRef(rH,w1,r1,thirds),
+    resolveRef(rA,w1,r1,thirds)
+  ])
+
+  // Jugar ronda a ronda — cada ganador alimenta la siguiente
+  function playRound(pairs) {
+    return pairs.map(([h,a]) => playKO(h,a))
+  }
+
+  const r32 = playRound(r32pairs)
+  const r32w = r32.map(m=>m.w)
+
+  const r16pairs = []
+  for (let i=0;i<16;i+=2) r16pairs.push([r32w[i], r32w[i+1]])
+  const r16 = playRound(r16pairs)
+  const r16w = r16.map(m=>m.w)
+
+  const qfPairs = []
+  for (let i=0;i<8;i+=2) qfPairs.push([r16w[i], r16w[i+1]])
+  const qf = playRound(qfPairs)
+  const qfw = qf.map(m=>m.w)
+
+  const sfPairs = []
+  for (let i=0;i<4;i+=2) sfPairs.push([qfw[i], qfw[i+1]])
+  const sf = playRound(sfPairs)
+  const sfw = sf.map(m=>m.w)
+
+  const fin = playKO(sfw[0], sfw[1])
+
+  return {
+    grpResults,   // {A:[...sorted], B:...}
+    r32,          // array de 16 partidos {h,a,gh,ga,w,l}
+    r16,          // array de 8
+    qf,           // array de 4
+    sf,           // array de 2
+    fin,          // 1 partido
+    champion: fin.w
+  }
+}
+
+function runSimulation(N, onProgress, onDone) {
+  // Contadores globales
+  const champC = {}
+  const grpQ = {}
+  // Fixture grupos: stats por partido
+  const grpMatchAcc = {}
+  // Para el bracket: guardamos el primer torneo de cada campeón
+  // Al final mostramos el torneo del campeón más frecuente
+  const champTournament = {}  // champion -> primer torneo de ejemplo
+  // Prob por ronda
+  const roundReach = { r32:{}, r16:{}, qf:{}, sf:{}, fin:{} }
+
+  const gks = Object.keys(GRP)
+  gks.forEach(g => {
+    GRP[g].forEach(t => { if(!champC[t]) champC[t]=0; if(!grpQ[t]) grpQ[t]=0 })
     const tm = GRP[g]
-    for (let i=0; i<tm.length; i++)
-      for (let j=i+1; j<tm.length; j++)
-        grpMatchAcc[tm[i]+'§'+tm[j]+'§'+g] = mkMatchAcc()
+    for (let i=0;i<tm.length;i++)
+      for (let j=i+1;j<tm.length;j++) {
+        const key = tm[i]+'§'+tm[j]+'§'+g
+        grpMatchAcc[key] = {n:0,hw:0,d:0,aw:0,hwS:{},dS:{},awS:{}}
+      }
   })
 
-  let done = 0
-  const CHUNK = 2000
+  function addMatch(key, gh, ga) {
+    const acc = grpMatchAcc[key]; acc.n++
+    const sc = gh+'-'+ga
+    if (gh>ga) { acc.hw++; acc.hwS[sc]=(acc.hwS[sc]||0)+1 }
+    else if (gh===ga) { acc.d++; acc.dS[sc]=(acc.dS[sc]||0)+1 }
+    else { acc.aw++; acc.awS[sc]=(acc.awS[sc]||0)+1 }
+  }
+
+  function addRound(rnd, matches) {
+    matches.forEach(m => {
+      rnd[m.w] = (rnd[m.w]||0)+1
+    })
+  }
+
+  let done=0
+  const CHUNK=1500
 
   function step() {
     const end = Math.min(done+CHUNK, N)
     for (let it=done; it<end; it++) {
-      const w1={}, r1={}, thirds=[]
+      // Simular fixture de grupos por separado (para stats)
       gks.forEach(g => {
         const tm = GRP[g]
         const sorted = simGroup(tm)
-        w1[g]=sorted[0]; r1[g]=sorted[1]
-        for (let i=0; i<tm.length; i++)
-          for (let j=i+1; j<tm.length; j++) {
-            const [gh, ga] = simMatch(tm[i], tm[j], false)
-            accGrp(grpMatchAcc[tm[i]+'§'+tm[j]+'§'+g], gh, ga)
-          }
         grpQ[sorted[0]]++; grpQ[sorted[1]]++
-        // calcular pts reales del 3ro para ranking de terceros
-        const t3 = sorted[2]
-        let p3=0, gf3=0, ga3=0
-        for (let i=0; i<tm.length; i++)
-          for (let j=i+1; j<tm.length; j++) {
-            const [gh2, ga2] = simMatch(tm[i], tm[j], false)
-            if (tm[i]===t3) { gf3+=gh2; ga3+=ga2; if(gh2>ga2)p3+=3; else if(gh2===ga2)p3++; }
-            if (tm[j]===t3) { gf3+=ga2; ga3+=gh2; if(ga2>gh2)p3+=3; else if(gh2===ga2)p3++; }
+        for (let i=0;i<tm.length;i++)
+          for (let j=i+1;j<tm.length;j++) {
+            const [gh,ga] = simGoals(tm[i],tm[j],false)
+            addMatch(tm[i]+'§'+tm[j]+'§'+g, gh, ga)
           }
-        thirds.push({ t:t3, g, pts:p3, gd:gf3-ga3, gf:gf3 })
       })
-      thirds.sort((a,b) => b.pts!==a.pts?b.pts-a.pts:b.gd!==a.gd?b.gd-a.gd:b.gf-a.gf)
 
-      const r32t = R32_DEF.map(([rH,rA]) => [
-        resolveRef(rH,w1,r1,thirds),
-        resolveRef(rA,w1,r1,thirds)
-      ])
+      // Simular torneo completo
+      const tour = runOneTournament()
+      const champ = tour.champion
 
-      const r16t=[], qft=[], sft=[], fint=[]
+      champC[champ] = (champC[champ]||0)+1
 
-      r32t.forEach(([h,a],i) => {
-        const res=playMatch(h,a,true); accPair(r32acc[i],res.h,res.a,res.gh,res.ga,res.w); r16t.push(res.w)
-      })
-      for (let i=0;i<16;i+=2) {
-        const res=playMatch(r16t[i],r16t[i+1],true); accPair(r16acc[i/2],res.h,res.a,res.gh,res.ga,res.w); qft.push(res.w)
-      }
-      for (let i=0;i<8;i+=2) {
-        const res=playMatch(qft[i],qft[i+1],true); accPair(qfAcc[i/2],res.h,res.a,res.gh,res.ga,res.w); sft.push(res.w)
-      }
-      for (let i=0;i<4;i+=2) {
-        const res=playMatch(sft[i],sft[i+1],true); accPair(sfAcc[i/2],res.h,res.a,res.gh,res.ga,res.w); fint.push(res.w)
-      }
-      const res=playMatch(fint[0],fint[1],true)
-      accPair(finAcc,res.h,res.a,res.gh,res.ga,res.w)
-      champC[res.w]=(champC[res.w]||0)+1
+      // Guardar primer ejemplo de torneo por campeón
+      if (!champTournament[champ]) champTournament[champ] = tour
+
+      // Stats de rondas
+      addRound(roundReach.r32, tour.r32)
+      addRound(roundReach.r16, tour.r16)
+      addRound(roundReach.qf, tour.qf)
+      addRound(roundReach.sf, tour.sf)
+      roundReach.fin[tour.fin.w] = (roundReach.fin[tour.fin.w]||0)+1
     }
     done = end
     onProgress(Math.round(done/N*100))
     if (done < N) setTimeout(step, 0)
-    else onDone({ champC, grpQ, grpMatchAcc, N, r32acc, r16acc, qfAcc, sfAcc, finAcc })
+    else {
+      // Elegir el torneo del campeón más frecuente para mostrar en bracket
+      const topChamp = Object.entries(champC).sort((a,b)=>b[1]-a[1])[0][0]
+      const exampleTour = champTournament[topChamp]
+      onDone({ champC, grpQ, grpMatchAcc, roundReach, N, exampleTour, topChamp })
+    }
   }
   step()
 }
 
-// ── COMPONENTES UI ────────────────────────────────────────────────────────
+// ── HELPERS ───────────────────────────────────────────────────────────────
 const pct = (c,n) => n ? +(c/n*100).toFixed(1) : 0
 
-function BracketCard({ acc, N }) {
-  const s = slotSummary(acc, N)
-  if (s.w === 'TBD') return (
-    <div className="bracket-card">
-      <div className="bracket-row tbd-row"><span className="team-name text-gray-500">TBD</span><span className="score-val">—</span></div>
-      <div className="bracket-row tbd-row"><span className="team-name text-gray-500">TBD</span><span className="score-val">—</span></div>
+function bestScore(acc) {
+  const n=acc.n||1, pw=acc.hw/n, pd=acc.d/n, pl=acc.aw/n
+  const pool = pw>=pd&&pw>=pl ? acc.hwS : pd>=pw&&pd>=pl ? acc.dS : acc.awS
+  const e = Object.entries(pool||{}).sort((a,b)=>b[1]-a[1])[0]
+  return e ? e[0] : '1-0'
+}
+
+// ── COMPONENTES ───────────────────────────────────────────────────────────
+
+// Card del bracket — muestra UN partido real de la simulación
+function BracketCard({ match }) {
+  if (!match) return (
+    <div className="bc">
+      <div className="bc-r tbd"><span className="bc-n">TBD</span><span className="bc-s">—</span></div>
+      <div className="bc-r tbd"><span className="bc-n">TBD</span><span className="bc-s">—</span></div>
     </div>
   )
+  const { h, a, gh, ga, w, l } = match
+  const winnerIsH = w===h
+  const wGoals = winnerIsH ? gh : ga
+  const lGoals = winnerIsH ? ga : gh
   return (
-    <div className="bracket-card">
-      <div className="bracket-row winner-row">
-        <span className="team-name">{s.w}</span>
-        <span className="score-val">{s.wGoals}</span>
+    <div className="bc">
+      <div className="bc-r win">
+        <span className="bc-n">{w}</span>
+        <span className="bc-s win-s">{wGoals}</span>
       </div>
-      <div className="bracket-row loser-row">
-        <span className="team-name">{s.l}</span>
-        <span className="score-val">{s.lGoals}</span>
+      <div className="bc-r lose">
+        <span className="bc-n lose-n">{l}</span>
+        <span className="bc-s lose-s">{lGoals}</span>
       </div>
     </div>
   )
 }
 
 function MatchCard({ h, a, acc }) {
-  const n = acc.n || 1
-  const pw = Math.round(acc.hw/n*100)
-  const pd = Math.round(acc.d/n*100)
-  const pl = Math.round(acc.aw/n*100)
-  const { score, pct: sfPct } = bestGrpScore(acc)
+  const n = acc.n||1
+  const pw=Math.round(acc.hw/n*100), pd=Math.round(acc.d/n*100), pl=Math.round(acc.aw/n*100)
+  const score = bestScore(acc)
+  const sfPct = (() => {
+    const n2=acc.n||1
+    const pw2=acc.hw/n2, pd2=acc.d/n2, pl2=acc.aw/n2
+    const pool = pw2>=pd2&&pw2>=pl2 ? acc.hwS : pd2>=pw2&&pd2>=pl2 ? acc.dS : acc.awS
+    const e = Object.entries(pool||{}).sort((a,b)=>b[1]-a[1])[0]
+    return e ? Math.round(e[1]/n2*100) : 0
+  })()
   return (
     <div className="match-card">
       <div className="match-top">
-        <div className="match-team right">
-          <div className="team-nm">{h}</div>
-          <div className="team-sub">Gana {pw}%</div>
-        </div>
+        <div className="match-team right"><div className="team-nm">{h}</div><div className="team-sub">Gana {pw}%</div></div>
         <div className="match-score-box">
           <div className="match-score-num">{score}</div>
           <div className="match-score-lbl">más prob · {sfPct}%</div>
         </div>
-        <div className="match-team left">
-          <div className="team-nm">{a}</div>
-          <div className="team-sub">Gana {pl}%</div>
-        </div>
+        <div className="match-team left"><div className="team-nm">{a}</div><div className="team-sub">Gana {pl}%</div></div>
       </div>
       <div className="match-bot">
-        <div className="prob-seg win-seg">
-          <div className="prob-pct">{pw}%</div>
-          <div className="prob-bar"><div className="prob-fill" style={{width:`${pw}%`,background:'#1D9E75'}} /></div>
-          <div className="prob-lbl">Gana {h.split(' ')[0]}</div>
-        </div>
-        <div className="prob-seg draw-seg">
-          <div className="prob-pct">{pd}%</div>
-          <div className="prob-bar"><div className="prob-fill" style={{width:`${pd}%`,background:'#BA7517'}} /></div>
-          <div className="prob-lbl">Empate</div>
-        </div>
-        <div className="prob-seg loss-seg">
-          <div className="prob-pct">{pl}%</div>
-          <div className="prob-bar"><div className="prob-fill" style={{width:`${pl}%`,background:'#D85A30'}} /></div>
-          <div className="prob-lbl">Gana {a.split(' ')[0]}</div>
-        </div>
+        <div className="prob-seg win-seg"><div className="prob-pct">{pw}%</div><div className="prob-bar"><div className="prob-fill" style={{width:`${pw}%`,background:'#1D9E75'}}/></div><div className="prob-lbl">Gana {h.split(' ')[0]}</div></div>
+        <div className="prob-seg draw-seg"><div className="prob-pct">{pd}%</div><div className="prob-bar"><div className="prob-fill" style={{width:`${pd}%`,background:'#BA7517'}}/></div><div className="prob-lbl">Empate</div></div>
+        <div className="prob-seg loss-seg"><div className="prob-pct">{pl}%</div><div className="prob-bar"><div className="prob-fill" style={{width:`${pl}%`,background:'#D85A30'}}/></div><div className="prob-lbl">Gana {a.split(' ')[0]}</div></div>
       </div>
     </div>
   )
@@ -362,9 +379,7 @@ export default function App() {
 
   const handleSim = useCallback(() => {
     if (running) return
-    setRunning(true)
-    setProgress(0)
-    setResults(null)
+    setRunning(true); setProgress(0); setResults(null)
     runSimulation(100000,
       p => setProgress(p),
       data => { setResults(data); setRunning(false); setProgress(100) }
@@ -376,11 +391,14 @@ export default function App() {
     : []
 
   const gks = Object.keys(GRP)
+  const tour = results?.exampleTour
 
   return (
     <div className="app-wrap">
       <style>{`
-        .app-wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+        * { box-sizing:border-box; margin:0; padding:0; }
+        body { background:#0a0f1e; color:#e8eaf0; font-family:'Inter',system-ui,sans-serif; min-height:100vh; }
+        .app-wrap { max-width:1300px; margin:0 auto; padding:1rem; }
         .top-bar { display:flex; align-items:center; gap:12px; margin-bottom:1rem; flex-wrap:wrap; }
         .app-title { font-size:22px; font-weight:700; color:#E8B923; }
         .badge { background:#1e3a5f; color:#60a5fa; font-size:11px; padding:2px 8px; border-radius:4px; }
@@ -392,37 +410,52 @@ export default function App() {
         .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:8px; margin-bottom:1rem; }
         .kpi { background:#111827; border:1px solid #1e2a3a; border-radius:8px; padding:.5rem .75rem; }
         .kpi-l { font-size:10px; color:#6b7280; margin-bottom:2px; }
-        .kpi-v { font-size:16px; font-weight:600; color:#e8eaf0; }
+        .kpi-v { font-size:15px; font-weight:600; color:#e8eaf0; }
         .tabs { display:flex; gap:6px; margin-bottom:1rem; flex-wrap:wrap; }
         .tab { padding:6px 14px; border:1px solid #1e2a3a; border-radius:6px; font-size:12px; cursor:pointer; background:#111827; color:#9ca3af; }
         .tab.on { background:#1e2a3a; color:#e8eaf0; font-weight:600; border-color:#374151; }
         .sec { display:none; } .sec.on { display:block; }
+        .empty-msg { color:#6b7280; font-size:13px; padding:2rem 0; }
 
-        /* BRACKET */
-        .br-scroll { overflow-x:auto; padding-bottom:8px; }
-        .br-grid { display:grid; grid-template-columns:repeat(9,140px); gap:0; min-width:1260px; }
-        .br-col { display:flex; flex-direction:column; }
-        .br-col-head { font-size:9px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.05em; text-align:center; padding:4px 3px; border-bottom:1px solid #1e2a3a; margin-bottom:6px; }
-        .br-col-head.center { color:#E8B923; }
-        .br-col-body { display:flex; flex-direction:column; flex:1; padding:0 3px; }
-        .bracket-card { background:#111827; border:1px solid #1e2a3a; border-radius:8px; overflow:hidden; margin-bottom:4px; width:132px; }
-        .bracket-row { display:flex; justify-content:space-between; align-items:center; padding:5px 8px; min-height:26px; }
-        .bracket-row+.bracket-row { border-top:1px solid #1e2a3a; }
-        .winner-row { background:#052e16; }
-        .winner-row .team-name { font-weight:600; color:#4ade80; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:88px; }
-        .winner-row .score-val { color:#4ade80; font-weight:700; font-size:12px; }
-        .loser-row .team-name { color:#9ca3af; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:88px; }
-        .loser-row .score-val { color:#6b7280; font-size:11px; }
-        .tbd-row { background:transparent; }
-        .score-val { min-width:18px; text-align:right; }
-        .trophy-center { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:12px 4px; text-align:center; }
-        .trophy-icon { font-size:28px; }
-        .trophy-name { font-size:13px; font-weight:700; color:#E8B923; }
+        /* ── BRACKET ── */
+        .br-note { font-size:11px; color:#4b5563; margin-bottom:10px; background:#111827; border:1px solid #1e2a3a; border-radius:6px; padding:6px 10px; }
+        .br-scroll { overflow-x:auto; padding-bottom:12px; }
+        .br-grid { display:grid; gap:0; min-width:1240px; }
+        .br-heads { display:grid; grid-template-columns:200px repeat(4,150px) repeat(4,150px) 200px; margin-bottom:6px; }
+        .br-head { font-size:9px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.06em; text-align:center; padding:4px 3px; border-bottom:1px solid #1e2a3a; }
+        .br-head.gold { color:#E8B923; }
+        .br-body { display:grid; grid-template-columns:200px repeat(4,150px) repeat(4,150px) 200px; align-items:start; }
+
+        /* columna de partidos */
+        .br-col { padding:0 4px; }
+        .br-col-center { padding:0 4px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+
+        /* bracket card */
+        .bc { background:#111827; border:1px solid #1e2a3a; border-radius:8px; overflow:hidden; margin-bottom:5px; width:188px; }
+        .bc-r { display:flex; justify-content:space-between; align-items:center; padding:5px 9px; min-height:28px; }
+        .bc-r + .bc-r { border-top:1px solid #1e2a3a; }
+        .bc-r.win { background:#052e16; }
+        .bc-r.tbd { background:transparent; }
+        .bc-n { font-size:12px; color:#e8eaf0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:130px; }
+        .bc-r.win .bc-n { font-weight:600; color:#4ade80; }
+        .bc-r.lose .bc-n { color:#9ca3af; }
+        .bc-s { font-size:13px; font-weight:700; min-width:20px; text-align:right; }
+        .win-s { color:#4ade80; }
+        .lose-s { color:#6b7280; }
+
+        /* trofeo */
+        .trophy-wrap { text-align:center; padding:10px 6px; }
+        .trophy-icon { font-size:30px; margin-bottom:6px; }
+        .trophy-name { font-size:14px; font-weight:700; color:#E8B923; margin-bottom:2px; }
         .trophy-pct { font-size:11px; color:#9ca3af; }
+        .trophy-label { font-size:9px; font-weight:600; color:#E8B923; text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px; }
 
         /* FIXTURE */
+        .filter-row { display:flex; gap:8px; margin-bottom:.9rem; align-items:center; flex-wrap:wrap; }
+        .filter-row label { font-size:12px; color:#6b7280; }
+        .filter-row select { font-size:12px; padding:4px 10px; border:1px solid #1e2a3a; border-radius:6px; background:#111827; color:#e8eaf0; }
         .grp-header { font-size:11px; font-weight:600; color:#9ca3af; text-transform:uppercase; letter-spacing:.05em; margin:1rem 0 6px; padding-bottom:4px; border-bottom:1px solid #1e2a3a; display:flex; align-items:center; gap:6px; }
-        .grp-dot { width:8px; height:8px; border-radius:50%; }
+        .grp-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
         .match-card { background:#111827; border:1px solid #1e2a3a; border-radius:10px; margin-bottom:6px; overflow:hidden; }
         .match-top { display:grid; grid-template-columns:1fr 96px 1fr; align-items:center; padding:10px 14px; gap:6px; }
         .match-team.right { text-align:right; } .match-team.left { text-align:left; }
@@ -452,140 +485,115 @@ export default function App() {
         /* GRUPOS */
         .grp-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(185px,1fr)); gap:10px; }
         .grp-card { background:#111827; border:1px solid #1e2a3a; border-radius:10px; padding:.7rem .9rem; }
-        .grp-card-title { font-size:11px; font-weight:600; color:#9ca3af; text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px; }
+        .grp-card-title { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px; }
         .grp-team-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid #1e2a3a; }
         .grp-team-row:last-child { border:none; }
         .grp-team-name { font-size:12px; color:#e8eaf0; }
         .grp-team-pct { font-size:11px; font-weight:600; }
-
-        .filter-row { display:flex; gap:8px; margin-bottom:.9rem; align-items:center; flex-wrap:wrap; }
-        .filter-row label { font-size:12px; color:#6b7280; }
-        .filter-row select { font-size:12px; padding:4px 10px; border:1px solid #1e2a3a; border-radius:6px; background:#111827; color:#e8eaf0; }
-
-        @media (max-width:640px) {
-          .match-top { grid-template-columns:1fr 80px 1fr; padding:8px; }
-          .team-nm { font-size:12px; }
-          .match-score-num { font-size:20px; }
-        }
       `}</style>
 
       {/* HEADER */}
       <div className="top-bar">
         <div className="app-title">🏆 Simulador Mundial 2026</div>
-        <div className="badge">100.000 iteraciones · Monte Carlo</div>
+        <div className="badge">Monte Carlo · 100.000 iteraciones</div>
         <button className="sim-btn" onClick={handleSim} disabled={running}>
           {running ? `⏳ Simulando ${progress}%…` : results ? '↺ Re-simular' : '▶ Simular'}
         </button>
       </div>
 
-      <div className="prog-bar"><div className="prog-fill" style={{width:`${progress}%`}} /></div>
+      <div className="prog-bar"><div className="prog-fill" style={{width:`${progress}%`}}/></div>
 
       {/* KPIs */}
       <div className="kpis">
-        <div className="kpi"><div className="kpi-l">Iteraciones</div><div className="kpi-v">{results ? (100000).toLocaleString() : '—'}</div></div>
-        {sorted[0] && <><div className="kpi"><div className="kpi-l">Campeón #1</div><div className="kpi-v" style={{fontSize:13}}>{sorted[0][0]}</div></div><div className="kpi"><div className="kpi-l">Prob.</div><div className="kpi-v">{pct(sorted[0][1],100000)}%</div></div></>}
-        {sorted[1] && <><div className="kpi"><div className="kpi-l">Campeón #2</div><div className="kpi-v" style={{fontSize:13}}>{sorted[1][0]}</div></div><div className="kpi"><div className="kpi-l">Prob.</div><div className="kpi-v">{pct(sorted[1][1],100000)}%</div></div></>}
-        {sorted[2] && <><div className="kpi"><div className="kpi-l">Campeón #3</div><div className="kpi-v" style={{fontSize:13}}>{sorted[2][0]}</div></div><div className="kpi"><div className="kpi-l">Prob.</div><div className="kpi-v">{pct(sorted[2][1],100000)}%</div></div></>}
+        <div className="kpi"><div className="kpi-l">Iteraciones</div><div className="kpi-v">{results?'100.000':'—'}</div></div>
+        {sorted[0] && <><div className="kpi"><div className="kpi-l">Campeón #1</div><div className="kpi-v" style={{fontSize:13}}>{sorted[0][0]}</div></div><div className="kpi"><div className="kpi-l">Prob.</div><div className="kpi-v">{pct(sorted[0][1],results.N)}%</div></div></>}
+        {sorted[1] && <><div className="kpi"><div className="kpi-l">Campeón #2</div><div className="kpi-v" style={{fontSize:13}}>{sorted[1][0]}</div></div><div className="kpi"><div className="kpi-l">Prob.</div><div className="kpi-v">{pct(sorted[1][1],results.N)}%</div></div></>}
+        {sorted[2] && <><div className="kpi"><div className="kpi-l">Campeón #3</div><div className="kpi-v" style={{fontSize:13}}>{sorted[2][0]}</div></div><div className="kpi"><div className="kpi-l">Prob.</div><div className="kpi-v">{pct(sorted[2][1],results.N)}%</div></div></>}
       </div>
 
       {/* TABS */}
       <div className="tabs">
-        {[['bracket','🏆 Bracket'],['fixture','📅 Fixture'],['campeones','📊 Campeones'],['grupos','👥 Grupos']].map(([id,label]) => (
-          <div key={id} className={`tab${tab===id?' on':''}`} onClick={()=>setTab(id)}>{label}</div>
+        {[['bracket','🏆 Bracket'],['fixture','📅 Fixture'],['campeones','📊 Campeones'],['grupos','👥 Grupos']].map(([id,lbl])=>(
+          <div key={id} className={`tab${tab===id?' on':''}`} onClick={()=>setTab(id)}>{lbl}</div>
         ))}
       </div>
 
       {/* ── BRACKET ── */}
       {tab==='bracket' && (
-        <div>
-          {!results ? (
-            <div style={{color:'#6b7280',fontSize:13,padding:'2rem 0'}}>Presioná ▶ Simular para ver el bracket completo del torneo.</div>
-          ) : (
+        !results ? <div className="empty-msg">Presioná ▶ Simular para ver el bracket.</div> : (
+          <div>
+            <div className="br-note">
+              📌 Este bracket muestra <strong>un torneo real simulado</strong> cuyo campeón es <strong>{results.topChamp}</strong>, el equipo que ganó más veces en las 100.000 simulaciones. Cada partido y resultado son coherentes de punta a punta.
+            </div>
             <div className="br-scroll">
-              <div className="br-grid">
-                {/* Cabeceras */}
-                {['Dieciséisavos','Octavos','Cuartos','Semis','Final · Campeón','Semis','Cuartos','Octavos','Dieciséisavos'].map((h,i) => (
-                  <div key={i} className="br-col">
-                    <div className={`br-col-head${i===4?' center':''}`}>{h}</div>
-                  </div>
-                ))}
+              {/* Cabeceras */}
+              <div className="br-heads">
+                <div className="br-head">Dieciséisavos</div>
+                <div className="br-head">Octavos</div>
+                <div className="br-head">Cuartos</div>
+                <div className="br-head">Semis</div>
+                <div className="br-head gold">Final · Campeón</div>
+                <div className="br-head">Semis</div>
+                <div className="br-head">Cuartos</div>
+                <div className="br-head">Octavos</div>
+                <div className="br-head">Dieciséisavos</div>
               </div>
-              <div className="br-grid" style={{marginTop:-28}}>
-                {/* R32 izq */}
+              {/* Cuerpo */}
+              <div className="br-body">
+                {/* R32 izquierdo (slots 0-7) */}
                 <div className="br-col">
-                  <div className="br-col-body">
-                    {results.r32acc.slice(0,8).map((acc,i)=>(
-                      <div key={i} style={{marginBottom:4}}><BracketCard acc={acc} N={results.N}/></div>
-                    ))}
-                  </div>
+                  {tour.r32.slice(0,8).map((m,i)=><BracketCard key={i} match={m}/>)}
                 </div>
-                {/* R16 izq */}
-                <div className="br-col">
-                  <div className="br-col-body" style={{paddingTop:27}}>
-                    {results.r16acc.slice(0,4).map((acc,i)=>(
-                      <div key={i} style={{marginBottom:i<3?30:0}}><BracketCard acc={acc} N={results.N}/></div>
-                    ))}
-                  </div>
+                {/* R16 izquierdo (slots 0-3) */}
+                <div className="br-col" style={{paddingTop:33}}>
+                  {tour.r16.slice(0,4).map((m,i)=>(
+                    <div key={i} style={{marginBottom: i<3 ? 38 : 0}}><BracketCard match={m}/></div>
+                  ))}
                 </div>
-                {/* QF izq */}
-                <div className="br-col">
-                  <div className="br-col-body" style={{paddingTop:57}}>
-                    {results.qfAcc.slice(0,2).map((acc,i)=>(
-                      <div key={i} style={{marginBottom:i<1?94:0}}><BracketCard acc={acc} N={results.N}/></div>
-                    ))}
-                  </div>
+                {/* QF izquierdo (slots 0-1) */}
+                <div className="br-col" style={{paddingTop:72}}>
+                  {tour.qf.slice(0,2).map((m,i)=>(
+                    <div key={i} style={{marginBottom: i<1 ? 110 : 0}}><BracketCard match={m}/></div>
+                  ))}
                 </div>
-                {/* SF izq */}
-                <div className="br-col">
-                  <div className="br-col-body" style={{paddingTop:127}}>
-                    <BracketCard acc={results.sfAcc[0]} N={results.N}/>
-                  </div>
+                {/* SF izquierdo (slot 0) */}
+                <div className="br-col" style={{paddingTop:148}}>
+                  <BracketCard match={tour.sf[0]}/>
                 </div>
                 {/* CENTRO */}
-                <div className="br-col">
-                  <div className="br-col-body" style={{justifyContent:'center',alignItems:'center',display:'flex',flexDirection:'column',paddingTop:80}}>
-                    <BracketCard acc={results.finAcc} N={results.N}/>
-                    <div className="trophy-center">
-                      <div className="trophy-icon">🏆</div>
-                      <div className="trophy-name">{sorted[0]?.[0]||'—'}</div>
-                      <div className="trophy-pct">{sorted[0]?pct(sorted[0][1],results.N)+'%':'—'} de prob.</div>
-                    </div>
+                <div className="br-col-center">
+                  <div className="trophy-label">Final</div>
+                  <BracketCard match={tour.fin}/>
+                  <div className="trophy-wrap">
+                    <div className="trophy-icon">🏆</div>
+                    <div className="trophy-name">{results.topChamp}</div>
+                    <div className="trophy-pct">{pct(results.champC[results.topChamp],results.N)}% de probabilidad</div>
                   </div>
                 </div>
-                {/* SF der */}
-                <div className="br-col">
-                  <div className="br-col-body" style={{paddingTop:127}}>
-                    <BracketCard acc={results.sfAcc[1]} N={results.N}/>
-                  </div>
+                {/* SF derecho (slot 1) */}
+                <div className="br-col" style={{paddingTop:148}}>
+                  <BracketCard match={tour.sf[1]}/>
                 </div>
-                {/* QF der */}
-                <div className="br-col">
-                  <div className="br-col-body" style={{paddingTop:57}}>
-                    {results.qfAcc.slice(2,4).map((acc,i)=>(
-                      <div key={i} style={{marginBottom:i<1?94:0}}><BracketCard acc={acc} N={results.N}/></div>
-                    ))}
-                  </div>
+                {/* QF derecho (slots 2-3) */}
+                <div className="br-col" style={{paddingTop:72}}>
+                  {tour.qf.slice(2,4).map((m,i)=>(
+                    <div key={i} style={{marginBottom: i<1 ? 110 : 0}}><BracketCard match={m}/></div>
+                  ))}
                 </div>
-                {/* R16 der */}
-                <div className="br-col">
-                  <div className="br-col-body" style={{paddingTop:27}}>
-                    {results.r16acc.slice(4,8).map((acc,i)=>(
-                      <div key={i} style={{marginBottom:i<3?30:0}}><BracketCard acc={acc} N={results.N}/></div>
-                    ))}
-                  </div>
+                {/* R16 derecho (slots 4-7) */}
+                <div className="br-col" style={{paddingTop:33}}>
+                  {tour.r16.slice(4,8).map((m,i)=>(
+                    <div key={i} style={{marginBottom: i<3 ? 38 : 0}}><BracketCard match={m}/></div>
+                  ))}
                 </div>
-                {/* R32 der */}
+                {/* R32 derecho (slots 8-15) */}
                 <div className="br-col">
-                  <div className="br-col-body">
-                    {results.r32acc.slice(8,16).map((acc,i)=>(
-                      <div key={i} style={{marginBottom:4}}><BracketCard acc={acc} N={results.N}/></div>
-                    ))}
-                  </div>
+                  {tour.r32.slice(8,16).map((m,i)=><BracketCard key={i} match={m}/>)}
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )
       )}
 
       {/* ── FIXTURE ── */}
@@ -598,9 +606,7 @@ export default function App() {
               {gks.map(g=><option key={g}>{g}</option>)}
             </select>
           </div>
-          {!results ? (
-            <div style={{color:'#6b7280',fontSize:13,padding:'1rem 0'}}>Presioná ▶ Simular para ver los partidos.</div>
-          ) : (
+          {!results ? <div className="empty-msg">Presioná ▶ Simular.</div> :
             gks.filter(g=>!groupFilter||g===groupFilter).map(g=>(
               <div key={g}>
                 <div className="grp-header">
@@ -612,41 +618,41 @@ export default function App() {
                 )))}
               </div>
             ))
-          )}
+          }
         </div>
       )}
 
       {/* ── CAMPEONES ── */}
       {tab==='campeones' && (
         <div>
-          <div style={{fontSize:12,color:'#6b7280',marginBottom:10}}>Frecuencia de campeonato en {(100000).toLocaleString()} simulaciones.</div>
-          {!results ? (
-            <div style={{color:'#6b7280',fontSize:13}}>Presioná ▶ Simular.</div>
-          ) : (
-            sorted.slice(0,20).map(([nm,c],i)=>{
-              const colors=['#1D9E75','#378ADD','#7F77DD','#D85A30','#BA7517','#D4537E','#0F6E56','#185FA5','#533489','#3B6D11']
+          <div style={{fontSize:12,color:'#6b7280',marginBottom:12}}>
+            Probabilidad de ganar el Mundial según 100.000 simulaciones completas.
+          </div>
+          {!results ? <div className="empty-msg">Presioná ▶ Simular.</div> :
+            sorted.slice(0,24).map(([nm,c],i)=>{
+              const cols=['#1D9E75','#378ADD','#7F77DD','#D85A30','#BA7517','#D4537E','#0F6E56','#185FA5','#533489','#3B6D11']
               return (
                 <div key={nm} className="champ-row">
                   <div className="champ-rank">{i+1}</div>
                   <div className="champ-name">{nm}</div>
                   <div className="champ-bar-wrap">
-                    <div className="champ-bar" style={{width:`${Math.round(c/sorted[0][1]*100)}%`,background:colors[i%10]}}/>
+                    <div className="champ-bar" style={{width:`${Math.round(c/sorted[0][1]*100)}%`,background:cols[i%10]}}/>
                   </div>
                   <div className="champ-pct">{pct(c,results.N)}%</div>
                 </div>
               )
             })
-          )}
+          }
         </div>
       )}
 
       {/* ── GRUPOS ── */}
       {tab==='grupos' && (
         <div>
-          <div style={{fontSize:12,color:'#6b7280',marginBottom:10}}>% de clasificar desde la fase de grupos (top 2 + 8 mejores terceros).</div>
-          {!results ? (
-            <div style={{color:'#6b7280',fontSize:13}}>Presioná ▶ Simular.</div>
-          ) : (
+          <div style={{fontSize:12,color:'#6b7280',marginBottom:12}}>
+            % de clasificar desde grupos (top 2 + 8 mejores terceros).
+          </div>
+          {!results ? <div className="empty-msg">Presioná ▶ Simular.</div> :
             <div className="grp-grid">
               {gks.map(g=>(
                 <div key={g} className="grp-card">
@@ -664,7 +670,7 @@ export default function App() {
                 </div>
               ))}
             </div>
-          )}
+          }
         </div>
       )}
     </div>
