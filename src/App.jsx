@@ -1,55 +1,75 @@
 import React, { useState, useCallback, useRef } from 'react'
 
-// ── DATOS EQUIPOS [rank, att, def, forma, valor€M, host, wc_titles] ───────
+// ── DATOS EQUIPOS — ACTUALIZADOS con resultados reales Jornada 1 (11-15 jun 2026) ──
+// [rank, att, def, forma_score, valor€M, host, wc_titles]
+// forma_score ajustado: 60% previa + 40% rendimiento real en J1
+// Sorpresas grandes: España baja, Cabo Verde/Qatar/Marruecos/USA/Alemania/Suecia suben
 const T = {
-  'España':         [2,  2.30,0.70,0.94,1050,0,1],
+  // ── GRUPO A: México 2-0 Sudáfrica ✅ | Corea del Sur 2-1 Rep. Checa ✅
+  'México':         [17, 1.68,0.88,0.78, 270,1,0],  // ganó bien como local, sube
+  'Sudáfrica':      [42, 1.05,1.05,0.52, 100,0,0],  // perdió 0-2, baja
+  'Corea del Sur':  [19, 1.50,0.88,0.74, 200,0,0],  // ganó 2-1, sube
+  'Rep. Checa':     [40, 1.10,1.02,0.57, 150,0,0],  // perdió, confirma nivel
+
+  // ── GRUPO B: Canadá 1-1 Bosnia ⚖ | Qatar 1-1 Suiza 💥SORPRESA
+  'Canadá':         [30, 1.35,0.95,0.66, 220,1,0],  // empató, anfitrión
+  'Bosnia-Herz.':   [38, 1.25,0.97,0.64, 130,0,0],  // empató bien vs Canadá
+  'Qatar':          [37, 1.22,0.98,0.67,  70,0,0],  // SUBE MUCHO: empató a Suiza
+  'Suiza':          [14, 1.48,0.92,0.67, 250,0,0],  // bajó: no pudo con Qatar
+
+  // ── GRUPO C: Brasil 1-1 Marruecos 💥 | Escocia 2-0 Haití ✅
+  'Brasil':         [6,  1.90,0.85,0.77, 870,0,5],  // empató, dudas defensivas Ancelotti
+  'Marruecos':      [13, 1.72,0.78,0.82, 280,0,0],  // SUBE: superó a Brasil tácticamente
+  'Escocia':        [36, 1.35,0.90,0.70, 190,0,0],  // SUBE: ganó 2-0 con autoridad
+  'Haití':          [68, 0.70,1.25,0.40,  25,0,0],  // perdió 0-2, nivel bajo confirmado
+
+  // ── GRUPO D: USA 4-1 Paraguay 💥GOLEADA | Australia 2-0 Turquía ✅
+  'USA':            [16, 1.82,0.82,0.85, 290,1,0],  // SUBE MUCHO: paliza de 4-1, local
+  'Paraguay':       [28, 1.05,1.05,0.55, 150,0,0],  // goleada en contra, baja
+  'Australia':      [27, 1.45,0.88,0.72, 180,0,0],  // ganó bien 2-0, sube
+  'Turquía':        [21, 1.30,0.98,0.62, 310,0,0],  // perdió 0-2, decepciona
+
+  // ── GRUPO E: Alemania 7-1 Curazao 💥PALIZA | Costa de Marfil 1-0 Ecuador 💥
+  'Alemania':       [7,  2.25,0.72,0.90, 780,0,4],  // SUBE MUCHO: 7 goles, Musiala imparable
+  'Curazao':        [72, 0.60,1.40,0.35,  30,0,0],  // humillado, confirma nivel
+  'Costa de Marfil':[33, 1.42,0.92,0.70, 200,0,0],  // SUBE: venció a Ecuador con eficacia
+  'Ecuador':        [25, 1.22,1.00,0.60, 200,0,0],  // perdió, perdonó demasiado
+
+  // ── GRUPO F: Suecia 5-1 Túnez 💥PALIZA | Países Bajos 2-2 Japón ⚖
+  'Suecia':         [26, 1.88,0.80,0.86, 310,0,0],  // SUBE MUCHO: Isak+Gyökeres letales
+  'Túnez':          [34, 1.00,1.08,0.50,  90,0,0],  // goleada, confirma debilidad
+  'Países Bajos':   [8,  1.82,0.87,0.76, 700,0,0],  // empató, defensivamente frágil
+  'Japón':          [18, 1.65,0.85,0.78, 230,0,0],  // SUBE: igualó a Holanda de igual a igual
+
+  // ── GRUPO G: Bélgica 1-1 Egipto 💥 (Salah decisivo)
+  'Bélgica':        [9,  1.68,0.92,0.70, 620,0,0],  // no ganó, en declive claro
+  'Egipto':         [32, 1.38,0.92,0.70, 110,0,0],  // SUBE: Salah casi da la victoria
+  'Irán':           [29, 1.30,0.95,0.65, 130,0,0],  // sin jugar aún
+  'Nueva Zelanda':  [85, 0.75,1.30,0.44,  20,0,0],  // sin jugar aún
+
+  // ── GRUPO H: España 0-0 Cabo Verde 💥BOMBA | Arabia Saudí 1-1 Uruguay ⚖
+  'España':         [2,  1.88,0.85,0.74,1050,0,1],  // BAJA MUCHO: 0 goles vs debutante, en crisis
+  'Cabo Verde':     [44, 1.15,0.88,0.78,  60,0,0],  // SUBE MUCHO: Vozinha héroe, organización táctica
+  'Arabia Saudí':   [31, 1.42,0.90,0.74, 100,0,0],  // SUBE: casi gana Uruguay, muy sólidos
+  'Uruguay':        [10, 1.65,0.90,0.72, 380,0,2],  // empató, remontó pero sin convencer
+
+  // ── GRUPOS I-L: sin jugar, datos base ─────────────────────────────────────
   'Francia':        [3,  2.25,0.72,0.90,1100,0,2],
-  'Argentina':      [1,  2.28,0.75,0.88, 950,0,3],
-  'Inglaterra':     [4,  2.10,0.78,0.86,1020,0,1],
-  'Portugal':       [5,  2.15,0.80,0.84, 900,0,0],
-  'Brasil':         [6,  2.08,0.77,0.83, 870,0,5],
-  'Alemania':       [7,  2.02,0.80,0.81, 780,0,4],
-  'Países Bajos':   [8,  1.95,0.82,0.80, 700,0,0],
-  'Noruega':        [22, 1.90,0.85,0.79, 420,0,0],
-  'Bélgica':        [9,  1.82,0.86,0.76, 620,0,0],
-  'Uruguay':        [10, 1.78,0.86,0.77, 380,0,2],
-  'Croacia':        [11, 1.72,0.88,0.75, 360,0,0],
-  'Colombia':       [23, 1.65,0.87,0.75, 350,0,0],
-  'Marruecos':      [13, 1.68,0.81,0.76, 280,0,0],
-  'Suiza':          [14, 1.60,0.86,0.73, 250,0,0],
   'Senegal':        [15, 1.62,0.88,0.72, 240,0,0],
-  'Japón':          [18, 1.55,0.87,0.72, 230,0,0],
-  'Turquía':        [21, 1.50,0.89,0.71, 310,0,0],
-  'Suecia':         [26, 1.52,0.88,0.71, 310,0,0],
-  'USA':            [16, 1.55,0.91,0.72, 290,1,0],
-  'México':         [17, 1.58,0.92,0.70, 270,1,0],
-  'Canadá':         [30, 1.42,0.93,0.68, 220,1,0],
-  'Corea del Sur':  [19, 1.45,0.92,0.69, 200,0,0],
-  'Austria':        [24, 1.48,0.92,0.69, 280,0,0],
-  'Ecuador':        [25, 1.42,0.93,0.68, 200,0,0],
-  'Australia':      [27, 1.36,0.95,0.66, 180,0,0],
-  'Paraguay':       [28, 1.34,0.96,0.65, 150,0,0],
-  'Irán':           [29, 1.30,0.95,0.65, 130,0,0],
-  'Costa de Marfil':[33, 1.32,0.96,0.64, 200,0,0],
-  'Escocia':        [36, 1.28,0.96,0.64, 190,0,0],
-  'Arabia Saudí':   [31, 1.25,0.97,0.64, 100,0,0],
-  'Egipto':         [32, 1.24,0.98,0.63, 110,0,0],
-  'Ghana':          [35, 1.24,0.97,0.63, 160,0,0],
-  'Túnez':          [34, 1.20,0.98,0.62,  90,0,0],
-  'Bosnia-Herz.':   [38, 1.20,0.99,0.62, 130,0,0],
-  'Rep. Checa':     [40, 1.15,1.00,0.61, 150,0,0],
-  'Sudáfrica':      [42, 1.15,1.01,0.60, 100,0,0],
-  'Qatar':          [37, 1.10,1.05,0.59,  70,0,0],
-  'Cabo Verde':     [44, 1.05,1.05,0.58,  60,0,0],
-  'Argelia':        [52, 1.02,1.06,0.57,  80,0,0],
-  'Uzbekistán':     [50, 1.00,1.08,0.56,  50,0,0],
-  'DR Congo':       [60, 0.95,1.10,0.53,  55,0,0],
-  'Jordania':       [63, 0.88,1.15,0.51,  30,0,0],
-  'Panamá':         [70, 0.85,1.18,0.49,  40,0,0],
-  'Haití':          [68, 0.82,1.20,0.48,  25,0,0],
-  'Curazao':        [72, 0.80,1.22,0.47,  30,0,0],
   'Irak':           [75, 0.85,1.15,0.50,  35,0,0],
-  'Nueva Zelanda':  [85, 0.75,1.30,0.44,  20,0,0],
+  'Noruega':        [22, 1.90,0.85,0.79, 420,0,0],
+  'Argentina':      [1,  2.28,0.75,0.88, 950,0,3],
+  'Argelia':        [52, 1.02,1.06,0.57,  80,0,0],
+  'Austria':        [24, 1.48,0.92,0.69, 280,0,0],
+  'Jordania':       [63, 0.88,1.15,0.51,  30,0,0],
+  'Portugal':       [5,  2.15,0.80,0.84, 900,0,0],
+  'DR Congo':       [60, 0.95,1.10,0.53,  55,0,0],
+  'Uzbekistán':     [50, 1.00,1.08,0.56,  50,0,0],
+  'Colombia':       [23, 1.65,0.87,0.75, 350,0,0],
+  'Inglaterra':     [4,  2.10,0.78,0.86,1020,0,1],
+  'Croacia':        [11, 1.72,0.88,0.75, 360,0,0],
+  'Ghana':          [35, 1.24,0.97,0.63, 160,0,0],
+  'Panamá':         [70, 0.85,1.18,0.49,  40,0,0],
 }
 
 const GRP = {
@@ -495,7 +515,7 @@ export default function App() {
       {/* HEADER */}
       <div className="top-bar">
         <div className="app-title">🏆 Simulador Mundial 2026</div>
-        <div className="badge">Monte Carlo · 100.000 iteraciones</div>
+        <div className="badge">Monte Carlo · 100k iter · datos J1 reales</div>
         <button className="sim-btn" onClick={handleSim} disabled={running}>
           {running ? `⏳ Simulando ${progress}%…` : results ? '↺ Re-simular' : '▶ Simular'}
         </button>
