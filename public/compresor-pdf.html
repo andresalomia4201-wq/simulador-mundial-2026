@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+</head>
+<body>
+<title>Compresor de PDF</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: una sola columna estrecha, pensada para el pulgar; la tarjeta de archivo es el único objeto con borde. */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --ink: #17202b;
+  --muted: #5b6878;
+  --line: #d3dae2;
+  --accent: #2346d8;
+  --accent-ink: #ffffff;
+  --save: #0f7a4a;
+  --warn: #a4430b;
+  --track: #dde3ea;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Figtree", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #18202a; --ink: #e8edf3; --muted: #9aa7b6; --line: #2b3643;
+    --accent: #7d97ff; --accent-ink: #0b1020; --save: #4fd197; --warn: #ffa36b; --track: #26303c;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #18202a; --ink: #e8edf3; --muted: #9aa7b6; --line: #2b3643;
+  --accent: #7d97ff; --accent-ink: #0b1020; --save: #4fd197; --warn: #ffa36b; --track: #26303c;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 400 16px/1.5 var(--font-body); }
+.wrap { max-width: 560px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 48px; display: grid; gap: 22px; }
+h1 { font: 800 clamp(30px, 8vw, 40px)/1.05 var(--font-display); letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+.label { font: 600 12px/1 var(--font-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 10px; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.drop {
+  display: grid; place-items: center; gap: 6px; text-align: center;
+  border: 2px dashed var(--line); border-radius: 14px; padding: 28px 16px;
+  background: var(--surface); cursor: pointer; transition: border-color .15s;
+}
+.drop:hover, .drop.over, .drop:focus-within { border-color: var(--accent); }
+.drop strong { font: 600 18px/1.2 var(--font-display); }
+.drop span { color: var(--muted); font-size: 14px; }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.sample { background: none; border: 0; color: var(--accent); font: 500 14px var(--font-body); text-decoration: underline; cursor: pointer; padding: 4px; justify-self: center; }
+
+.file { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; gap: 12px; align-items: center; }
+.file .doc { flex: none; width: 38px; height: 46px; border-radius: 4px; background: var(--track); position: relative; display: grid; place-items: end center; padding-bottom: 6px; font: 600 9px var(--font-mono); color: var(--muted); }
+.file .doc::after { content: ""; position: absolute; top: 0; right: 0; border-style: solid; border-width: 0 10px 10px 0; border-color: transparent var(--bg) transparent transparent; }
+.file .meta { min-width: 0; flex: 1; }
+.file .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file .sub { color: var(--muted); font-size: 14px; }
+.ghost { background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 999px; padding: 6px 12px; font: 500 14px var(--font-body); cursor: pointer; }
+
+.levels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.level { position: relative; }
+.level input { position: absolute; opacity: 0; inset: 0; pointer-events: none; }
+.level label { display: grid; gap: 2px; padding: 12px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); cursor: pointer; height: 100%; }
+.level label b { font: 600 16px var(--font-display); }
+.level label small { color: var(--muted); font-size: 13px; line-height: 1.35; }
+.level input:checked + label { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.level input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.toggle { display: flex; gap: 10px; align-items: center; margin-top: 12px; font-size: 15px; }
+.toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+.go { width: 100%; border: 0; border-radius: 12px; padding: 16px; background: var(--accent); color: var(--accent-ink); font: 600 18px var(--font-display); cursor: pointer; }
+.go:disabled { opacity: .45; cursor: not-allowed; }
+.go:focus-visible, .ghost:focus-visible, .sample:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.progress { display: grid; gap: 8px; }
+.bar { height: 8px; background: var(--track); border-radius: 99px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.progress p { margin: 0; color: var(--muted); font-size: 14px; }
+
+.result { display: grid; gap: 14px; }
+.compare { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 12px; }
+.compare div p { margin: 0; }
+.compare .big { font: 600 clamp(22px, 6vw, 28px)/1.1 var(--font-mono); }
+.compare .arrow { color: var(--muted); font-size: 22px; padding-bottom: 2px; }
+.pill { justify-self: start; border-radius: 999px; padding: 4px 12px; font: 600 14px var(--font-body); }
+.pill.good { color: var(--save); background: color-mix(in srgb, var(--save) 14%, transparent); }
+.pill.bad { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.note { margin: 0; color: var(--muted); font-size: 14px; }
+.msg { margin: 0; font-size: 14px; color: var(--warn); }
+.msg.ok { color: var(--save); }
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 14px; }
+footer p { margin: 0 0 6px; }
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+</style>
+
+<main class="wrap">
+  <header>
+    <h1>Compresor de PDF</h1>
+    <p class="lede">Reduce el peso de tus PDF desde el teléfono. Todo ocurre en tu dispositivo: el archivo no se sube a ningún servidor.</p>
+  </header>
+
+  <section id="pick">
+    <label class="drop" id="drop">
+      <input type="file" id="fileInput" accept="application/pdf,.pdf">
+      <strong>Elige un PDF</strong>
+      <span>Toca aquí o arrastra el archivo</span>
+    </label>
+    <div style="display:grid;margin-top:6px">
+      <button class="sample" id="sampleBtn" type="button">Probar con un PDF de ejemplo</button>
+    </div>
+  </section>
+
+  <section id="fileCard" hidden>
+    <div class="file">
+      <div class="doc">PDF</div>
+      <div class="meta">
+        <div class="name" id="fileName"></div>
+        <div class="sub mono" id="fileSub"></div>
+      </div>
+      <button class="ghost" id="changeBtn" type="button">Cambiar</button>
+    </div>
+  </section>
+
+  <section>
+    <p class="label">Nivel de compresión</p>
+    <div class="levels" role="radiogroup">
+      <div class="level"><input type="radio" name="lvl" id="lvl-max" value="max"><label for="lvl-max"><b>Máxima</b><small>96 ppp · para enviar por WhatsApp o correo</small></label></div>
+      <div class="level"><input type="radio" name="lvl" id="lvl-mid" value="mid" checked><label for="lvl-mid"><b>Equilibrada</b><small>130 ppp · buena lectura en pantalla</small></label></div>
+      <div class="level"><input type="radio" name="lvl" id="lvl-low" value="low"><label for="lvl-low"><b>Suave</b><small>170 ppp · apta para imprimir</small></label></div>
+      <div class="level"><input type="radio" name="lvl" id="lvl-lossless" value="lossless"><label for="lvl-lossless"><b>Sin pérdida</b><small>Conserva texto; ahorra poco</small></label></div>
+    </div>
+    <label class="toggle" id="grayRow"><input type="checkbox" id="gray"> Pasar a blanco y negro (pesa menos)</label>
+  </section>
+
+  <button class="go" id="goBtn" type="button" disabled>Comprimir PDF</button>
+
+  <section class="progress" id="progress" hidden>
+    <div class="bar"><i id="barFill"></i></div>
+    <p id="progressText" class="mono">Preparando…</p>
+  </section>
+
+  <section class="result" id="result" hidden>
+    <div class="compare">
+      <div><p class="label">Original</p><p class="big" id="sizeBefore">—</p></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div><p class="label">Comprimido</p><p class="big" id="sizeAfter">—</p></div>
+    </div>
+    <span class="pill" id="savePill"></span>
+    <button class="go" id="downloadBtn" type="button">Descargar PDF comprimido</button>
+    <p class="msg" id="dlMsg" hidden></p>
+    <p class="note" id="resultNote"></p>
+  </section>
+
+  <footer>
+    <p>Los niveles Máxima, Equilibrada y Suave convierten cada página en imagen JPEG: el texto deja de poderse seleccionar o buscar. Funciona muy bien con escaneos y fotos.</p>
+    <p>Sin pérdida reorganiza la estructura interna del PDF y mantiene el texto, pero el ahorro suele ser pequeño.</p>
+  </footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script>
+(function () {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const LEVELS = {
+    max: { dpi: 96, q: 0.5 },
+    mid: { dpi: 130, q: 0.65 },
+    low: { dpi: 170, q: 0.8 }
+  };
+  const MAX_SIDE = 2600; // tope de píxeles por lado para no agotar memoria en el móvil
+
+  const $ = (id) => document.getElementById(id);
+  let source = null;   // { name, bytes: Uint8Array, pages }
+  let output = null;   // { name, blob }
+
+  const fmt = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(2) + " MB";
+
+  function level() { return document.querySelector('input[name="lvl"]:checked').value; }
+  function syncGray() { $("grayRow").hidden = level() === "lossless"; }
+  document.querySelectorAll('input[name="lvl"]').forEach((r) => r.addEventListener("change", () => { syncGray(); $("result").hidden = true; }));
+  $("gray").addEventListener("change", () => { $("result").hidden = true; });
+
+  async function loadFile(name, bytes) {
+    $("result").hidden = true;
+    $("progress").hidden = true;
+    try {
+      const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+      source = { name, bytes, pages: doc.numPages };
+      doc.destroy();
+    } catch (e) {
+      source = null;
+      showError(e && e.name === "PasswordException"
+        ? "Este PDF tiene contraseña. Quítala primero y vuelve a intentarlo."
+        : "No se pudo abrir el archivo. Comprueba que sea un PDF válido.");
+      return;
+    }
+    $("fileName").textContent = name;
+    $("fileSub").textContent = fmt(bytes.length) + " · " + source.pages + (source.pages === 1 ? " página" : " páginas");
+    $("pick").hidden = true;
+    $("fileCard").hidden = false;
+    $("goBtn").disabled = false;
+  }
+
+  function showError(text) {
+    $("progress").hidden = false;
+    $("barFill").style.width = "0";
+    $("progressText").textContent = text;
+  }
+
+  $("fileInput").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    await loadFile(f.name, new Uint8Array(await f.arrayBuffer()));
+    e.target.value = "";
+  });
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", async (e) => {
+    const f = e.dataTransfer.files[0];
+    if (f) await loadFile(f.name, new Uint8Array(await f.arrayBuffer()));
+  });
+  $("changeBtn").addEventListener("click", () => {
+    source = null; output = null;
+    $("fileCard").hidden = true; $("pick").hidden = false;
+    $("result").hidden = true; $("progress").hidden = true;
+    $("goBtn").disabled = true;
+  });
+
+  // PDF de ejemplo: tres páginas con una "foto" ruidosa que pesa bastante.
+  $("sampleBtn").addEventListener("click", async () => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: "pt", format: "a4" });
+    const c = document.createElement("canvas");
+    c.width = 1400; c.height = 1000;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    for (let p = 0; p < 3; p++) {
+      if (p) pdf.addPage();
+      const g = ctx.createLinearGradient(0, 0, 1400, 1000);
+      g.addColorStop(0, ["#3a6ea5", "#2e8b57", "#b5651d"][p]);
+      g.addColorStop(1, "#f0e6d2");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 1400, 1000);
+      const img = ctx.getImageData(0, 0, 1400, 1000);
+      for (let i = 0; i < img.data.length; i += 4) {
+        const n = (Math.random() - 0.5) * 60;
+        img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+      }
+      ctx.putImageData(img, 0, 0);
+      pdf.setFontSize(22);
+      pdf.text("Informe de ejemplo · página " + (p + 1), 48, 64);
+      pdf.setFontSize(11);
+      pdf.text("Documento generado para probar el compresor.", 48, 88);
+      pdf.addImage(c.toDataURL("image/jpeg", 0.98), "JPEG", 48, 110, 500, 357);
+    }
+    await loadFile("ejemplo.pdf", new Uint8Array(pdf.output("arraybuffer")));
+  });
+
+  function setProgress(done, total, text) {
+    $("progress").hidden = false;
+    $("barFill").style.width = Math.round((done / total) * 100) + "%";
+    $("progressText").textContent = text;
+  }
+
+  function toBlob(canvas, q) {
+    return new Promise((res) => canvas.toBlob(res, "image/jpeg", q));
+  }
+
+  async function rasterize(opts, gray) {
+    const { jsPDF } = window.jspdf;
+    const doc = await pdfjsLib.getDocument({ data: source.bytes.slice() }).promise;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: gray });
+    let out = null;
+    for (let i = 1; i <= doc.numPages; i++) {
+      setProgress(i - 1, doc.numPages, "Página " + i + " de " + doc.numPages + "…");
+      const page = await doc.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      let scale = opts.dpi / 72;
+      scale = Math.min(scale, MAX_SIDE / Math.max(base.width, base.height));
+      const vp = page.getViewport({ scale });
+      canvas.width = Math.floor(vp.width);
+      canvas.height = Math.floor(vp.height);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      if (gray) {
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const d = img.data;
+        for (let k = 0; k < d.length; k += 4) {
+          const y = 0.299 * d[k] + 0.587 * d[k + 1] + 0.114 * d[k + 2];
+          d[k] = d[k + 1] = d[k + 2] = y;
+        }
+        ctx.putImageData(img, 0, 0);
+      }
+      const jpg = new Uint8Array(await (await toBlob(canvas, opts.q)).arrayBuffer());
+      const w = base.width, h = base.height, orient = w > h ? "l" : "p";
+      if (!out) out = new jsPDF({ unit: "pt", format: [w, h], orientation: orient, compress: true });
+      else out.addPage([w, h], orient);
+      out.addImage(jpg, "JPEG", 0, 0, w, h, undefined, "FAST");
+      page.cleanup();
+    }
+    doc.destroy();
+    canvas.width = canvas.height = 0;
+    return out.output("blob");
+  }
+
+  async function lossless() {
+    setProgress(0, 1, "Reorganizando el PDF…");
+    const doc = await PDFLib.PDFDocument.load(source.bytes, { ignoreEncryption: true });
+    const bytes = await doc.save({ useObjectStreams: true });
+    return new Blob([bytes], { type: "application/pdf" });
+  }
+
+  $("goBtn").addEventListener("click", async () => {
+    if (!source) return;
+    const lvl = level();
+    $("goBtn").disabled = true;
+    $("result").hidden = true;
+    try {
+      const blob = lvl === "lossless" ? await lossless() : await rasterize(LEVELS[lvl], $("gray").checked);
+      setProgress(1, 1, "Listo");
+      const base = source.name.replace(/\.pdf$/i, "");
+      output = { name: base + "-comprimido.pdf", blob };
+      showResult(source.bytes.length, blob.size, lvl);
+    } catch (e) {
+      console.error(e);
+      showError("Algo falló al comprimir. Si el PDF es muy grande, prueba con el nivel Máxima.");
+    } finally {
+      $("goBtn").disabled = false;
+    }
+  });
+
+  function showResult(before, after, lvl) {
+    $("sizeBefore").textContent = fmt(before);
+    $("sizeAfter").textContent = fmt(after);
+    const pct = Math.round((1 - after / before) * 100);
+    const pill = $("savePill");
+    $("dlMsg").hidden = true;
+    if (after < before) {
+      pill.className = "pill good";
+      pill.textContent = pct >= 1 ? pct + " % más ligero" : fmt(before - after) + " menos";
+      $("resultNote").textContent = lvl === "lossless"
+        ? "El texto sigue siendo seleccionable."
+        : "Revisa que se lea bien antes de enviarlo. Si se ve borroso, usa un nivel más suave.";
+    } else {
+      pill.className = "pill bad";
+      pill.textContent = "No se redujo (" + (pct === 0 ? "igual" : "+" + Math.abs(pct) + " %") + ")";
+      $("resultNote").textContent = lvl === "lossless"
+        ? "Este PDF ya está optimizado. Prueba con Equilibrada o Máxima."
+        : "Este PDF ya era ligero (probablemente solo texto). Prueba con Sin pérdida o quédate con el original.";
+    }
+    $("result").hidden = false;
+    $("result").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
+  }
+
+  // Descarga: dentro de Claude usa la capacidad "downloads"; fuera, un enlace normal.
+  let downloadsP = null;
+  function getDownloads() {
+    if (!downloadsP) downloadsP = window.claude && window.claude.use ? window.claude.use("downloads").catch(() => null) : Promise.resolve(null);
+    return downloadsP;
+  }
+  getDownloads();
+
+  $("downloadBtn").addEventListener("click", async () => {
+    if (!output) return;
+    const msg = $("dlMsg");
+    msg.hidden = true;
+    const dl = await getDownloads();
+    if (dl) {
+      try {
+        await dl.save({ filename: output.name, data: output.blob });
+        msg.className = "msg ok"; msg.textContent = "Guardado: " + output.name; msg.hidden = false;
+      } catch (e) {
+        if (e && e.code === "declined") return;
+        msg.className = "msg";
+        msg.textContent = e && e.code === "rate_limited"
+          ? "Ya hay una descarga pendiente de confirmar."
+          : "No se pudo guardar aquí. Abre el compresor en el navegador y vuelve a intentarlo.";
+        msg.hidden = false;
+      }
+      return;
+    }
+    const url = URL.createObjectURL(output.blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = output.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  });
+
+  syncGray();
+})();
+</script>
+
+</body>
+</html>

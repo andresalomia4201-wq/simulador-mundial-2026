@@ -4,6 +4,10 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/compresor",
+      "destination": "/compresor-pdf.html"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
